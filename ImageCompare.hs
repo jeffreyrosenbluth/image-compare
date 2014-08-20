@@ -5,66 +5,61 @@ module Main where
 
 import Data.Vector.Storable as V
 import Codec.Picture
-import Codec.Picture.Types (promoteImage)
+import Codec.Picture.Types (promoteImage, Pixel8)
 
-zipPixelComponent
-    :: forall px. ( V.Storable (PixelBaseComponent px))
-    => (PixelBaseComponent px -> PixelBaseComponent px -> PixelBaseComponent px)
-    -> Image px -> Image px -> Image px
-{-# INLINE zipPixelComponent #-}
-zipPixelComponent f i1@(Image { imageWidth = w1, imageHeight = h1 }) 
-                    i2@(Image { imageWidth = w2, imageHeight = h2 })
-  | w1 /= w2 || h1 /= h2 = error "Different image sizes"
-  | otherwise       = Image { imageWidth = w1
-                            , imageHeight = h2
-                            , imageData = V.zipWith f data1 data2 }
-  where 
-    data1 = imageData i1
-    data2 = imageData i2
-
-foldPixelComponent :: Storable (PixelBaseComponent a) 
-                   => (b -> PixelBaseComponent a -> b) -> b -> Image a -> b
-foldPixelComponent f acc im =  V.foldl' f acc (imageData im)
-
-pixelDiff :: (Storable (PixelBaseComponent px), Num (PixelBaseComponent px)
-             ,Ord (PixelBaseComponent px))
-          => Image px -> Image px -> Image px
-pixelDiff i1 i2 = zipPixelComponent sub i1 i2
+-- | Calculate the mean sqared error (MSE) and peak signal to noise
+--   ratio (PSNR) between two images. Images must be of the same pixel
+--   type. If the images are not the same size then it will compare
+--   the first n pixels where n is the number of pixels in the smaller
+--   image.
+compareImages :: DynamicImage -> DynamicImage -> (Double, Double)
+compareImages i1 i2
+  | sameImageType i1 i2 = (mse, psnr)
+  | otherwise           = error "Can't compare images of differnt types"
   where
-    -- Must be careful to substract Word8 types.
-    sub x y = max x y - min x y
+    mse = V.foldl' (\a x -> a + x*x) 0 xs / n
+    psnr = (-10) * logBase 10 mse
+    (v1, v2) = (componentValues i1, componentValues i2)
+    xs = V.zipWith (-) v1 v2
+    n = fromIntegral $ min (V.length v1) (V.length v2)
 
-imageDiff :: (Storable (PixelBaseComponent a), Integral (PixelBaseComponent a)
-             ,Floating b)
-          => Image a -> Image a -> b
-imageDiff i1 i2 = sqrt $ foldPixelComponent f 0 (pixelDiff i1 i2) / n
-  where
-    n = fromIntegral $ imageWidth i1 * imageHeight i2
-    f acc x = acc + fromIntegral  x * fromIntegral x 
+componentValues :: DynamicImage -> V.Vector Double
+componentValues (ImageY8 i)     = V.map ((/255)   . fromIntegral) (imageData i)
+componentValues (ImageY16 i)    = V.map ((/65535) . fromIntegral) (imageData i)
+componentValues (ImageYA8 i)    = V.map ((/255)   . fromIntegral) (imageData i)
+componentValues (ImageYA16 i)   = V.map ((/65535) . fromIntegral) (imageData i)
+componentValues (ImageYF i)     = V.map realToFrac                (imageData i)
+componentValues (ImageRGB8 i)   = V.map ((/255)   . fromIntegral) (imageData i)
+componentValues (ImageRGB16 i)  = V.map ((/65535) . fromIntegral) (imageData i)
+componentValues (ImageRGBA8 i)  = V.map ((/255)   . fromIntegral) (imageData i)
+componentValues (ImageRGBA16 i) = V.map ((/65535) . fromIntegral) (imageData i)
+componentValues (ImageRGBF i)   = V.map realToFrac                (imageData i)
+componentValues (ImageYCbCr8 i) = V.map ((/255)   . fromIntegral) (imageData i)
+componentValues (ImageCMYK8 i)  = V.map ((/255)   . fromIntegral) (imageData i)
+componentValues (ImageCMYK16 i) = V.map ((/65535) . fromIntegral) (imageData i)
 
--- Does not handle ImageYF and ImageRGBF, since Float is not Integral.
-dynamicImageDiff :: Floating a => DynamicImage -> DynamicImage -> a
-dynamicImageDiff (ImageY8 i1)     (ImageY8 i2)     = imageDiff i1 i2
-dynamicImageDiff (ImageY16 i1)    (ImageY16 i2)    = imageDiff i1 i2
-dynamicImageDiff (ImageYA8 i1)    (ImageYA8 i2)    = imageDiff i1 i2
-dynamicImageDiff (ImageYA16 i1)   (ImageYA16 i2)   = imageDiff i1 i2
-dynamicImageDiff (ImageRGB8 i1)   (ImageRGB8 i2)   = imageDiff i1 i2
-dynamicImageDiff (ImageRGB16 i1)  (ImageRGB16 i2)  = imageDiff i1 i2
-dynamicImageDiff (ImageRGBA8 i1)  (ImageRGBA8 i2)  = imageDiff i1 i2
-dynamicImageDiff (ImageRGBA16 i1) (ImageRGBA16 i2) = imageDiff i1 i2
-dynamicImageDiff (ImageYCbCr8 i1) (ImageYCbCr8 i2) = imageDiff i1 i2
-dynamicImageDiff (ImageCMYK8 i1)  (ImageCMYK8 i2)  = imageDiff i1 i2
-dynamicImageDiff (ImageRGBA8 i1)  (ImageRGB8 i2)   = imageDiff i1 (promoteImage i2)
-dynamicImageDiff (ImageRGB8 i1)   (ImageRGBA8 i2)  = imageDiff (promoteImage i1) i2
-dynamicImageDiff _                _                = 
-  error "Different or unsupported pixel types"
+sameImageType :: DynamicImage -> DynamicImage -> Bool
+sameImageType (ImageY8 _)     (ImageY8 _)     = True
+sameImageType (ImageY16 _)    (ImageY16 _)    = True
+sameImageType (ImageYA8 _)    (ImageYA8 _)    = True
+sameImageType (ImageYA16 _)   (ImageYA16 _)   = True
+sameImageType (ImageYF _)     (ImageYF _)     = True
+sameImageType (ImageRGB8 _)   (ImageRGB8 _)   = True
+sameImageType (ImageRGB16 _)  (ImageRGB16 _)  = True
+sameImageType (ImageRGBA8 _)  (ImageRGBA8 _)  = True
+sameImageType (ImageRGBA16 _) (ImageRGBA16 _) = True
+sameImageType (ImageRGBF _)   (ImageRGBF _)   = True
+sameImageType (ImageYCbCr8 _) (ImageYCbCr8 _) = True
+sameImageType (ImageCMYK8 _)  (ImageCMYK8 _)  = True
+sameImageType (ImageCMYK16 _) (ImageCMYK16 _) = True
 
 main = do 
   di1 <- readImage "./orangeR.png"
   di2 <- readImage "./orangeC.png"
-  let d = case (di1, di2) of
-            (Left _, _) -> error "Image 1 not read"
-            (_, Left _) -> error "Image 2 not read"
-            (Right  i1, Right i2) -> dynamicImageDiff i1 i2
-  print d
+  let (m,p) = case (di1, di2) of
+               (Left _, _) -> error "Image 1 not read"
+               (_, Left _) -> error "Image 2 not read"
+               (Right  i1, Right i2) -> compareImages i1 i2
+  print m
+  print p
 
