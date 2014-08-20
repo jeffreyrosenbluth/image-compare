@@ -5,7 +5,7 @@ module Main where
 
 import Data.Vector.Storable as V
 import Codec.Picture
-import Codec.Picture.Types (pixelFold)
+import Codec.Picture.Types (promoteImage)
 
 zipPixelComponent
     :: forall px. ( V.Storable (PixelBaseComponent px))
@@ -26,14 +26,18 @@ foldPixelComponent :: Storable (PixelBaseComponent a)
                    => (b -> PixelBaseComponent a -> b) -> b -> Image a -> b
 foldPixelComponent f acc im =  V.foldl' f acc (imageData im)
 
-pixelDiff :: (Storable (PixelBaseComponent px), Num (PixelBaseComponent px))
+pixelDiff :: (Storable (PixelBaseComponent px), Num (PixelBaseComponent px)
+             ,Ord (PixelBaseComponent px))
           => Image px -> Image px -> Image px
-pixelDiff i1 i2 = zipPixelComponent (\x y -> x-y) i1 i2
+pixelDiff i1 i2 = zipPixelComponent sub i1 i2
+  where
+    -- Must be careful to substract Word8 types.
+    sub x y = max x y - min x y
 
 imageDiff :: (Storable (PixelBaseComponent a), Integral (PixelBaseComponent a)
              ,Floating b)
           => Image a -> Image a -> b
-imageDiff i1 i2 = sqrt $ (1/n) * foldPixelComponent f 0 (pixelDiff i1 i2)
+imageDiff i1 i2 = sqrt $ foldPixelComponent f 0 (pixelDiff i1 i2) / n
   where
     n = fromIntegral $ imageWidth i1 * imageHeight i2
     f acc x = acc + fromIntegral  x * fromIntegral x 
@@ -50,13 +54,14 @@ dynamicImageDiff (ImageRGBA8 i1)  (ImageRGBA8 i2)  = imageDiff i1 i2
 dynamicImageDiff (ImageRGBA16 i1) (ImageRGBA16 i2) = imageDiff i1 i2
 dynamicImageDiff (ImageYCbCr8 i1) (ImageYCbCr8 i2) = imageDiff i1 i2
 dynamicImageDiff (ImageCMYK8 i1)  (ImageCMYK8 i2)  = imageDiff i1 i2
-dynamicImageDiff (ImageCMYK16 i1) (ImageCMYK16 i2) = imageDiff i1 i2
+dynamicImageDiff (ImageRGBA8 i1)  (ImageRGB8 i2)   = imageDiff i1 (promoteImage i2)
+dynamicImageDiff (ImageRGB8 i1)   (ImageRGBA8 i2)  = imageDiff (promoteImage i1) i2
 dynamicImageDiff _                _                = 
   error "Different or unsupported pixel types"
 
 main = do 
-  di1 <- readImage "./avatar1.png"
-  di2 <- readImage "./avatar2.png"
+  di1 <- readImage "./orangeR.png"
+  di2 <- readImage "./orangeC.png"
   let d = case (di1, di2) of
             (Left _, _) -> error "Image 1 not read"
             (_, Left _) -> error "Image 2 not read"
